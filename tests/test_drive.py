@@ -13,6 +13,16 @@ async def resolve(value):
     return await value if inspect.isawaitable(value) else value
 
 
+def _entry(path):
+    return {"path": path, "name": path, "type": "file"}
+
+
+async def _collect(iterator, async_):
+    if async_:
+        return [entry.path async for entry in iterator]
+    return [entry.path for entry in iterator]
+
+
 @pytest.mark.parametrize("async_", [False, True])
 async def test_drive_paths_pages_and_typed_metadata(async_):
     requests = []
@@ -197,5 +207,188 @@ async def test_drive_does_not_normalize_paths_or_clamp_limits(async_):
             with pytest.raises(BadRequestError) as raised:
                 await resolve(client.drives.list_entries(identity_id="idn_test", path=path, limit=limit))
             assert raised.value.code == "invalid_argument"
+    finally:
+        await resolve(client.close())
+
+
+@pytest.mark.parametrize("async_", [False, True])
+async def test_drive_iter_entries_pages_lazily_in_service_order(async_):
+    requests = []
+    pages = {
+        None: {"entries": [_entry("a"), _entry("b")], "next_page_token": "t1"},
+        "t1": {"entries": [_entry("c")], "next_page_token": "t2"},
+        "t2": {"entries": [_entry("d")], "next_page_token": None},
+    }
+
+    def handler(request):
+        requests.append(request)
+        assert request.url.params["identity_id"] == "idn_test"
+        assert request.url.params["path"] == "dir"
+        assert request.url.params["limit"] == "2"
+        assert request.url.params["extra"] == "a/b"
+        return httpx.Response(200, json=pages[request.url.params.get("page_token")])
+
+    http = (httpx.AsyncClient if async_ else httpx.Client)(transport=httpx.MockTransport(handler))
+    client = (AsyncForward if async_ else Forward)(pat="test-pat", http_client=http)
+    try:
+        iterator = client.drives.iter_entries(identity_id="idn_test", path="dir", limit=2, extra_query={"extra": "a/b"})
+        assert requests == []
+        first = await anext(iterator) if async_ else next(iterator)
+        assert first.path == "a" and len(requests) == 1
+        second = await anext(iterator) if async_ else next(iterator)
+        assert second.path == "b" and len(requests) == 1
+        assert await _collect(iterator, async_) == ["c", "d"]
+        assert [request.url.params.get("page_token") for request in requests] == [None, "t1", "t2"]
+    finally:
+        await resolve(client.close())
+
+
+@pytest.mark.parametrize("async_", [False, True])
+async def test_drive_iter_entries_continues_through_empty_pages(async_):
+    requests = []
+    pages = {
+        None: {"entries": [], "next_page_token": "e1"},
+        "e1": {"entries": [], "next_page_token": "e2"},
+        "e2": {"entries": [_entry("x")], "next_page_token": None},
+    }
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json=pages[request.url.params.get("page_token")])
+
+    http = (httpx.AsyncClient if async_ else httpx.Client)(transport=httpx.MockTransport(handler))
+    client = (AsyncForward if async_ else Forward)(pat="test-pat", http_client=http)
+    try:
+        assert await _collect(client.drives.iter_entries(identity_id="idn_test"), async_) == ["x"]
+        assert [request.url.params.get("page_token") for request in requests] == [None, "e1", "e2"]
+    finally:
+        await resolve(client.close())
+
+
+@pytest.mark.parametrize("async_", [False, True])
+async def test_drive_iter_entries_single_page_terminates(async_):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        if request.url.params["path"] == "empty":
+            return httpx.Response(200, json={"entries": []})
+        return httpx.Response(200, json={"entries": [_entry("a"), _entry("b")], "next_page_token": None})
+
+    http = (httpx.AsyncClient if async_ else httpx.Client)(transport=httpx.MockTransport(handler))
+    client = (AsyncForward if async_ else Forward)(pat="test-pat", http_client=http)
+    try:
+        assert await _collect(client.drives.iter_entries(identity_id="idn_test", path="dir"), async_) == ["a", "b"]
+        assert len(requests) == 1
+        assert await _collect(client.drives.iter_entries(identity_id="idn_test", path="empty"), async_) == []
+        assert len(requests) == 2
+        assert requests[-1].url.params["path"] == "empty"
+    finally:
+        await resolve(client.close())
+
+
+@pytest.mark.parametrize("async_", [False, True])
+async def test_drive_iter_entries_rejects_repeated_cursor(async_):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"entries": [_entry("a")], "next_page_token": "same"})
+
+    http = (httpx.AsyncClient if async_ else httpx.Client)(transport=httpx.MockTransport(handler))
+    client = (AsyncForward if async_ else Forward)(pat="test-pat", http_client=http)
+    try:
+        with pytest.raises(RuntimeError, match="did not advance"):
+            await _collect(client.drives.iter_entries(identity_id="idn_test"), async_)
+        assert len(requests) == 2
+    finally:
+        await resolve(client.close())
+
+
+@pytest.mark.parametrize("async_", [False, True])
+async def test_drive_iter_entries_rejects_cursor_cycle(async_):
+    requests = []
+    pages = {
+        None: {"entries": [_entry("first")], "next_page_token": "b"},
+        "b": {"entries": [_entry("second")], "next_page_token": "a"},
+        "a": {"entries": [_entry("third")], "next_page_token": "b"},
+    }
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json=pages[request.url.params.get("page_token")])
+
+    http = (httpx.AsyncClient if async_ else httpx.Client)(transport=httpx.MockTransport(handler))
+    client = (AsyncForward if async_ else Forward)(pat="test-pat", http_client=http)
+    try:
+        with pytest.raises(RuntimeError, match="cycle detected"):
+            await _collect(client.drives.iter_entries(identity_id="idn_test"), async_)
+        assert len(requests) == 3
+    finally:
+        await resolve(client.close())
+
+
+@pytest.mark.parametrize("async_", [False, True])
+async def test_drive_iter_entries_does_not_prefetch_after_close(async_):
+    requests = []
+    pages = {
+        None: {"entries": [_entry("a"), _entry("b")], "next_page_token": "t1"},
+        "t1": {"entries": [_entry("c")], "next_page_token": None},
+    }
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json=pages[request.url.params.get("page_token")])
+
+    http = (httpx.AsyncClient if async_ else httpx.Client)(transport=httpx.MockTransport(handler))
+    client = (AsyncForward if async_ else Forward)(pat="test-pat", http_client=http)
+    try:
+        iterator = client.drives.iter_entries(identity_id="idn_test")
+        first = await anext(iterator) if async_ else next(iterator)
+        assert first.path == "a" and len(requests) == 1
+        if async_:
+            await iterator.aclose()
+        else:
+            iterator.close()
+        assert len(requests) == 1
+    finally:
+        await resolve(client.close())
+
+
+@pytest.mark.parametrize("async_", [False, True])
+async def test_drive_iter_entries_honours_initial_page_token(async_):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        assert request.url.params["page_token"] == "t0"
+        assert request.url.params["x"] == "1"
+        return httpx.Response(200, json={"entries": [], "next_page_token": None})
+
+    http = (httpx.AsyncClient if async_ else httpx.Client)(transport=httpx.MockTransport(handler))
+    client = (AsyncForward if async_ else Forward)(pat="test-pat", http_client=http)
+    try:
+        iterator = client.drives.iter_entries(
+            identity_id="idn_test", page_token="t0", extra_query={"page_token": "stale", "x": "1"}
+        )
+        assert await _collect(iterator, async_) == []
+        assert len(requests) == 1
+    finally:
+        await resolve(client.close())
+
+
+@pytest.mark.parametrize("async_", [False, True])
+async def test_drive_iter_entries_treats_blank_token_as_end(async_):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"entries": [_entry("a")], "next_page_token": ""})
+
+    http = (httpx.AsyncClient if async_ else httpx.Client)(transport=httpx.MockTransport(handler))
+    client = (AsyncForward if async_ else Forward)(pat="test-pat", http_client=http)
+    try:
+        assert await _collect(client.drives.iter_entries(identity_id="idn_test"), async_) == ["a"]
+        assert len(requests) == 1
     finally:
         await resolve(client.close())

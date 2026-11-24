@@ -4035,6 +4035,30 @@ def list_entries(
 
 GET /drives/entries. Returns one page in service order; reuse next_page_token in the same scope/path.
 
+<a id="qca.forward.resources.drives.Drives.iter_entries"></a>
+
+#### iter\_entries
+
+```python
+def iter_entries(
+    *,
+    identity_id: str,
+    path: str | NotGiven = NOT_GIVEN,
+    limit: int | NotGiven = NOT_GIVEN,
+    page_token: str | NotGiven = NOT_GIVEN,
+    extra_headers: dict[str, str] | None = None,
+    extra_query: dict[str, Any] | None = None,
+    extra_body: dict[str, Any] | None = None,
+    timeout: float | httpx.Timeout | None | NotGiven = NOT_GIVEN
+) -> Iterator[DriveEntry]
+```
+
+[[view_source]](https://github.com/QoderAI/qoder-cloud-agents-sdk-python/blob/main/src/qca/forward/resources/drives.py)
+
+Iterate Drive entries in service order, requesting one page at a time.
+
+Empty pages are followed. A repeated next_page_token raises RuntimeError instead of looping.
+
 <a id="qca.forward.resources.drives.Drives.create_upload_url"></a>
 
 #### create\_upload\_url
@@ -4151,6 +4175,30 @@ async def list_entries(
 [[view_source]](https://github.com/QoderAI/qoder-cloud-agents-sdk-python/blob/main/src/qca/forward/resources/drives.py)
 
 GET /drives/entries. Returns one page in service order; reuse next_page_token in the same scope/path.
+
+<a id="qca.forward.resources.drives.AsyncDrives.iter_entries"></a>
+
+#### iter\_entries
+
+```python
+async def iter_entries(
+    *,
+    identity_id: str,
+    path: str | NotGiven = NOT_GIVEN,
+    limit: int | NotGiven = NOT_GIVEN,
+    page_token: str | NotGiven = NOT_GIVEN,
+    extra_headers: dict[str, str] | None = None,
+    extra_query: dict[str, Any] | None = None,
+    extra_body: dict[str, Any] | None = None,
+    timeout: float | httpx.Timeout | None | NotGiven = NOT_GIVEN
+) -> AsyncIterator[DriveEntry]
+```
+
+[[view_source]](https://github.com/QoderAI/qoder-cloud-agents-sdk-python/blob/main/src/qca/forward/resources/drives.py)
+
+Iterate Drive entries in service order, requesting one page at a time.
+
+Empty pages are followed. A repeated next_page_token raises RuntimeError instead of looping.
 
 <a id="qca.forward.resources.drives.AsyncDrives.create_upload_url"></a>
 

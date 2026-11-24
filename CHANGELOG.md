@@ -7,6 +7,7 @@ existing `0.1.0` release; earlier development prereleases are not listed.
 
 ### Added
 
+- Add `drives.iter_entries()` to synchronous and asynchronous Forward clients. It yields entries lazily in service order, continues through empty pages, and raises on a repeated page cursor instead of looping.
 - Add Forward Session `auto_title` on creation and nullable `config.multiagent` on update. Omit `auto_title` for the server's false default; when true, omit `title` entirely. Clearing a roster with `None` does not restore Template inheritance, and create config still does not accept a roster.
 - Add independent Forward Template A2A publication settings and synchronous/asynchronous `templates.retrieve_agent_card()` discovery for A2A 0.3 and 1.0, with typed protocol fields and unknown-field preservation. PAT callers can select a runtime Identity; SAT callers omit it. No task invocation client is included.
 - Add typed Forward Environment config, packages and OSS bucket storage with separate write credentials and safe read models. Updates replace the whole config; omit a bucket credential to retain it, or use `buckets=[]` to remove future mounts without changing existing Sessions. Forward supports up to seven buckets through the existing `oss-bucket-2026-09-23` beta header.
