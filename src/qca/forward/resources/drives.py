@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -12,6 +13,7 @@ from qca.forward.types.drive import (
     DriveClearResponse,
     DriveDeleteEntryResponse,
     DriveDownloadURL,
+    DriveEntry,
     DriveListEntriesResponse,
     DriveUploadURL,
 )
@@ -22,6 +24,48 @@ def _drive_query(pairs: list[tuple[str, str]]) -> str:
     return "&".join(
         quote_plus(key) + "=" + quote_plus(value, safe="/" if key == "path" else "") for key, value in pairs
     )
+
+
+def _drive_entries_options(
+    *,
+    identity_id: str,
+    path: str | NotGiven,
+    limit: int | NotGiven,
+    page_token: str | None | NotGiven,
+    extra_headers: dict[str, str] | None,
+    extra_query: dict[str, Any] | None,
+    extra_body: dict[str, Any] | None,
+    timeout: float | httpx.Timeout | None | NotGiven,
+) -> dict[str, Any]:
+    options = make_request_options(
+        body={},
+        query={"identity_id": identity_id, "path": path, "limit": limit, "page_token": page_token},
+        headers={},
+        extra_headers=extra_headers,
+        extra_query=extra_query,
+        extra_body=extra_body,
+        timeout=timeout,
+    )
+    options["query_serializer"] = _drive_query
+    return options
+
+
+def _without_page_token(extra_query: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not extra_query or "page_token" not in extra_query:
+        return extra_query
+    return {key: value for key, value in extra_query.items() if key != "page_token"}
+
+
+def _next_drive_cursor(current: str | None, page: DriveListEntriesResponse, seen: set[str]) -> str | None:
+    token = page.next_page_token
+    if not token:
+        return None
+    if token == current:
+        raise RuntimeError("Pagination cursor did not advance")
+    if token in seen:
+        raise RuntimeError("Pagination cursor cycle detected")
+    seen.add(token)
+    return token
 
 
 class Drives(SyncAPIResource):
@@ -40,17 +84,53 @@ class Drives(SyncAPIResource):
         timeout: float | httpx.Timeout | None | NotGiven = NOT_GIVEN,
     ) -> DriveListEntriesResponse:
         """GET /drives/entries. Returns one page in service order; reuse next_page_token in the same scope/path."""
-        options = make_request_options(
-            body={},
-            query={"identity_id": identity_id, "path": path, "limit": limit, "page_token": page_token},
-            headers={},
+        options = _drive_entries_options(
+            identity_id=identity_id,
+            path=path,
+            limit=limit,
+            page_token=page_token,
             extra_headers=extra_headers,
             extra_query=extra_query,
             extra_body=extra_body,
             timeout=timeout,
         )
-        options["query_serializer"] = _drive_query
         return self._client.request("GET", "/drives/entries", cast_to=DriveListEntriesResponse, options=options)
+
+    def iter_entries(
+        self,
+        *,
+        identity_id: str,
+        path: str | NotGiven = NOT_GIVEN,
+        limit: int | NotGiven = NOT_GIVEN,
+        page_token: str | NotGiven = NOT_GIVEN,
+        extra_headers: dict[str, str] | None = None,
+        extra_query: dict[str, Any] | None = None,
+        extra_body: dict[str, Any] | None = None,
+        timeout: float | httpx.Timeout | None | NotGiven = NOT_GIVEN,
+    ) -> Iterator[DriveEntry]:
+        """Iterate Drive entries in service order, requesting one page at a time.
+
+        Empty pages are followed. A repeated next_page_token raises RuntimeError instead of looping.
+        """
+        cursor: str | None = None if isinstance(page_token, NotGiven) or not page_token else page_token
+        seen: set[str] = {cursor} if cursor else set()
+        extra_query = _without_page_token(extra_query)
+        while True:
+            options = _drive_entries_options(
+                identity_id=identity_id,
+                path=path,
+                limit=limit,
+                page_token=cursor,
+                extra_headers=extra_headers,
+                extra_query=extra_query,
+                extra_body=extra_body,
+                timeout=timeout,
+            )
+            page = self._client.request("GET", "/drives/entries", cast_to=DriveListEntriesResponse, options=options)
+            yield from page.entries
+            cursor = _next_drive_cursor(cursor, page, seen)
+            if cursor is None:
+                return
 
     def create_upload_url(
         self,
@@ -162,17 +242,56 @@ class AsyncDrives(AsyncAPIResource):
         timeout: float | httpx.Timeout | None | NotGiven = NOT_GIVEN,
     ) -> DriveListEntriesResponse:
         """GET /drives/entries. Returns one page in service order; reuse next_page_token in the same scope/path."""
-        options = make_request_options(
-            body={},
-            query={"identity_id": identity_id, "path": path, "limit": limit, "page_token": page_token},
-            headers={},
+        options = _drive_entries_options(
+            identity_id=identity_id,
+            path=path,
+            limit=limit,
+            page_token=page_token,
             extra_headers=extra_headers,
             extra_query=extra_query,
             extra_body=extra_body,
             timeout=timeout,
         )
-        options["query_serializer"] = _drive_query
         return await self._client.request("GET", "/drives/entries", cast_to=DriveListEntriesResponse, options=options)
+
+    async def iter_entries(
+        self,
+        *,
+        identity_id: str,
+        path: str | NotGiven = NOT_GIVEN,
+        limit: int | NotGiven = NOT_GIVEN,
+        page_token: str | NotGiven = NOT_GIVEN,
+        extra_headers: dict[str, str] | None = None,
+        extra_query: dict[str, Any] | None = None,
+        extra_body: dict[str, Any] | None = None,
+        timeout: float | httpx.Timeout | None | NotGiven = NOT_GIVEN,
+    ) -> AsyncIterator[DriveEntry]:
+        """Iterate Drive entries in service order, requesting one page at a time.
+
+        Empty pages are followed. A repeated next_page_token raises RuntimeError instead of looping.
+        """
+        cursor: str | None = None if isinstance(page_token, NotGiven) or not page_token else page_token
+        seen: set[str] = {cursor} if cursor else set()
+        extra_query = _without_page_token(extra_query)
+        while True:
+            options = _drive_entries_options(
+                identity_id=identity_id,
+                path=path,
+                limit=limit,
+                page_token=cursor,
+                extra_headers=extra_headers,
+                extra_query=extra_query,
+                extra_body=extra_body,
+                timeout=timeout,
+            )
+            page = await self._client.request(
+                "GET", "/drives/entries", cast_to=DriveListEntriesResponse, options=options
+            )
+            for entry in page.entries:
+                yield entry
+            cursor = _next_drive_cursor(cursor, page, seen)
+            if cursor is None:
+                return
 
     async def create_upload_url(
         self,

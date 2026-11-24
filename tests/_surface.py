@@ -26,6 +26,7 @@ from qca.common.pagination import AsyncPage, SyncPage
 DECLARATION = re.compile(r"^(GET|POST|PUT|PATCH|DELETE) (/[^\s.]*)\.")
 CONTROL_PARAMS = ("extra_headers", "extra_query", "extra_body", "timeout")
 HANDWRITTEN_RESOURCE_METHODS = {
+    "drives.iter_entries",
     "sessions.events.resumable_stream",
     "sessions.threads.events.resumable_stream",
     "realtime.connect",
